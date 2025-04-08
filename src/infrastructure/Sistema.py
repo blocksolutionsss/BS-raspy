@@ -1,5 +1,8 @@
 from src.domain.entities.SensorTemperaturaEntitie import SensorTemperaturaEntitie
-import threading
+from src.domain.entities.ESP32Entitie import ESP32Entitie
+from threading import Thread, Lock
+from datetime import datetime, timedelta
+from serial import Serial, SerialException
 import time
 import random
 from ..domain.entities.BrokerEntitie import BrokerEntitie
@@ -7,24 +10,118 @@ from ..domain.entities.BrokerEntitie import BrokerEntitie
 class Sistema:
     def __init__(self):
         self.sensorTemp = SensorTemperaturaEntitie()
+        
         self.running = False
+        self.time_init = datetime.now()
+        self.time_finish = datetime.now()
+        
         self.broker = BrokerEntitie()
         
+        self.device_ID = "device10"
+        
+        self.lock = Lock()
+        self.threads = []
+        
+        self.esp32 = ESP32Entitie()
+        self.thread_esp32 = Thread(target=self.leerSerial, daemon=True)
+        self.thread_esp32.start()
+        
+        self.data = {
+            "alert": {},
+            "real-time": {},
+            "End":{}
+        }
+        
+    def iniciar(self):
+        """Inicia la simulación de cambios de temperatura"""
+        self.running = True
+        self.time_init = datetime.now()
         
         # Iniciar el hilo para simular cambios de temperatura
-        self.thread_Temperatura = threading.Thread(target=self.leerTemperatura, daemon=True)
-        self.thread_Temperatura.start()
-
-    def leerTemperatura(self):
-        """Simula la lectura de temperatura"""
-        self.running = True
+        self.threads.append(Thread(target=self.leerAlertas, daemon=True))
+        
+        # Iniciar el hilo para simular cambios de real-time
+        self.threads.append(Thread(target=self.leerRealTime, daemon=True))
+        
+        # Iniciar el hilo para simular cambios de End
+        self.threads.append(Thread(target=self.leerEnd, daemon=True))
+        
+        for t in self.threads:
+            t.start()
+        
+    def detener(self):
+        """Detiene la simulación de cambios de temperatura"""
+        self.running = False
+        self.time_finish = datetime.now()
+        
+        for t in self.threads:
+            if t.is_alive():
+                t.join(timeout=2)
+    
+    def leerEnd(self):
+        """Simula la lectura de datos del ESP32"""
         while self.running:
-            # Simular un cambio de temperatura aleatorio
-            newTemp = random.randint(0, 100)
-            self.sensorTemp.update_temperature(newTemp)
-            # Publicar la nueva temperatura en el broker
-            self.broker.publish("temperatura", {"temperatura": newTemp})
-            time.sleep(1)
+            try:
+                if self.data["End"] == {}:
+                    continue
+                with self.lock:
+                    payload = {
+                        "device": self.device_ID,
+                        "data": self.data["End"]
+                    }
+                    self.broker.publish('bs.end', payload)
+                    self.data["End"] = {}
+                time.sleep(1)
+            except:
+              print('An exception occurred')
+        
+    def leerRealTime(self):
+        """Simula la lectura de datos del ESP32"""
+        while self.running:
+            try:
+                if self.data["real-time"] == {}:
+                    continue
+                with self.lock:
+                    payload = {
+                        "device": self.device_ID,
+                        "real-time": self.data["real-time"]
+                    }
+                    self.broker.publish('bs.real-time', payload)
+                    self.data["real-time"] = {}
+                time.sleep(1)
+            except:
+              print('An exception occurred')
+
+    def leerAlertas(self):
+        """Simula la lectura de temperatura"""
+        while self.running:
+            try:
+                if self.data["alert"] == {}:
+                    continue
+                with self.lock:
+                    payload = {
+                        "device": self.device_ID,
+                        "alerts": self.data["alert"]
+                    }
+                    self.broker.publish('bs.notifications', payload)
+                    self.data["alert"] = {}
+                time.sleep(1)
+            except:
+              print('An exception occurred')
+    
+    def leerSerial(self):
+        """Simula la lectura de datos del ESP32"""
+        while self.running:
+            try:
+                if self.esp32.serial.in_waiting == 0:
+                    continue
+                data = self.esp32.serial.readline().decode('utf-8').strip() 
+                print(f"Datos leídos del ESP32: {data}")
+                # Aquí puedes procesar los datos leídos
+            except SerialException as e:
+                print(f"Error de conexión: {e}")
+            except Exception as e:
+                print(f"Ocurrió un error inesperado: {e}")
 
     def getSignals(self):
         return {
@@ -36,3 +133,4 @@ class Sistema:
         self.running = False
         if self.thread.is_alive():
             self.thread.join(timeout=2)  # Esperar hasta 2 segundos a que el hilo termine
+    
