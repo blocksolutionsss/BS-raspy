@@ -29,7 +29,7 @@ class DeviceEntitie(QObject):
         self._airPurity = data["airPurity"]
         self._hours = data["hours"]
         self._minutes = data["minutes"]
-        self.histories = data["histories"] | []# Puede llenarse con objetos History, opcional
+        self.histories = data["histories"]# Puede llenarse con objetos History, opcional
         self._pause = data["pause"]
 
     # ------- PROPIEDADES CON SEÑALES -------
@@ -102,9 +102,8 @@ class DeviceEntitie(QObject):
 
     def get_pause(self): return self._pause
     def set_pause(self, value):
-        if self._pause != value:
-            self._pause = value
-            self.pauseChanged.emit(value)
+        self._pause = value
+        self.pauseChanged.emit(value)
     pause = Property(bool, get_pause, set_pause, notify=pauseChanged)
 
     def get_automatization(self): return self._automatization

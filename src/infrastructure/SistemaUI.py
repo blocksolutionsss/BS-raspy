@@ -182,6 +182,14 @@ class SistemaUI(QMainWindow):
         # Alertas y serial
         self.signals["Alertas"].connect(self.mostrar_alerta)
         self.signals["Serial"].connect(self.mostrar_serial)
+        self.signals["Pause"].connect(self.trigger_pause)
+
+    def trigger_pause(self, status):
+        print(status)
+        if status:
+            self.detener_sistema()
+        else:
+            self.iniciar_sistema()
 
     def actualizar_temperatura_ui(self, temperatura):
         """Actualiza el indicador de temperatura en la interfaz"""

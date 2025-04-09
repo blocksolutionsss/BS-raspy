@@ -23,13 +23,6 @@ class Sistema:
         self.sensorCalidadAire = SensorCalidadAire()
         self.alertas = AlertasEntitie()
         
-        self.running = False
-        self.time_init = datetime.now()
-        self.time_finish = datetime.now()
-        self.sqlite = SQLite3Entitie()
-        self.device = DeviceEntitie(self.sqlite.get_device())
-        self.socketIO = SocketIOEntitie(self.esp32, self.device)
-        
         self.broker = BrokerEntitie()
         
         self.device_ID = "device10"
@@ -41,6 +34,13 @@ class Sistema:
         self.thread_esp32 = Thread(target=self.leerSerial, daemon=True)
         self.thread_esp32.start()
         
+        self.running = False
+        self.time_init = datetime.now()
+        self.time_finish = datetime.now()
+        self.sqlite = SQLite3Entitie()
+        self.device = DeviceEntitie(self.sqlite.get_device())
+        self.socketIO = SocketIOEntitie(self.esp32, self.device)
+        
         self.data = {
             "alert": {},
             "real-time": {},
@@ -50,7 +50,7 @@ class Sistema:
     def temporizador(self):
         """Simula un temporizador"""
         while True:
-            if not self.device.get("pause", True):
+            if not self.device.get_pause():
                 with self.lock:
                     # Calcular los segundos totales del tiempo objetivo
                     segundos_totales = (self.device.get_hours() * 3600) + (self.device.get_minutes() * 60)
@@ -82,39 +82,41 @@ class Sistema:
         
     def iniciar(self):
         """Inicia el proceso de desidratado"""
-        self.esp32.iniciar_monitoreo(self.device["temperature"], self.device["humidity"])
+        self.esp32.iniciar_monitoreo(self.device.get_temperature(), self.device.get_humidity())
         self.running = True
-        self.device["pause"] = False
+        self.device.set_pause(False)
         self.sqlite.update_device({
-            'pause': self.device["pause"]
+            'pause': False
         })
         self.time_init = datetime.now()
         
-        # Iniciar el hilo para la lectura de datos del ESP32
-        self.threads.append(Thread(target=self.leerSerial, daemon=True))
-        
-        # Iniciar el hilo para la lectura de datos del ESP32
-        self.threads.append(Thread(target=self.leerAlertas, daemon=True))
-        
-        # Iniciar el hilo para cambios de real-time
-        self.threads.append(Thread(target=self.leerRealTime, daemon=True))
-        
-        # Iniciar el hilo para cambios de End
-        self.threads.append(Thread(target=self.leerEnd, daemon=True))
-        
-        # Iniciar el hilo para el temporizador
-        self.threads.append(Thread(target=self.temporizador, daemon=True))
-        
-        for t in self.threads:
-            t.start()
+
+        if len(self.threads) == 0:
+            # Iniciar el hilo para la lectura de datos del ESP32
+            self.threads.append(Thread(target=self.leerSerial, daemon=True))
+            
+            # Iniciar el hilo para la lectura de datos del ESP32
+            self.threads.append(Thread(target=self.leerAlertas, daemon=True))
+            
+            # Iniciar el hilo para cambios de real-time
+            self.threads.append(Thread(target=self.leerRealTime, daemon=True))
+            
+            # Iniciar el hilo para cambios de End
+            self.threads.append(Thread(target=self.leerEnd, daemon=True))
+            
+            # Iniciar el hilo para el temporizador
+            self.threads.append(Thread(target=self.temporizador, daemon=True))
+            
+            for t in self.threads:
+                t.start()
         
     def detener(self):
         """Detiene el proceso de desidratado"""
         self.esp32.pausar_monitoreo()
         self.running_temporizador = False
-        self.device["pause"] = True
+        self.device.set_pause(True)
         self.sqlite.update_device({
-            'pause': self.device["pause"]
+            'pause': True
         })
         self.time_finish = datetime.now()
     
@@ -126,6 +128,7 @@ class Sistema:
                     continue
                 with self.lock:
                     self.data["End"] = {}
+                    self.detener()
                 time.sleep(1)
             except:
               print('An exception occurred')
@@ -175,16 +178,16 @@ class Sistema:
                             "weight1": self.data["real-time"]["weight1"],
                             "weight2": self.data["real-time"]["weight2"],
                             "airPurity": self.data["real-time"]["flyClean"],
-                            "hours_actual": self.device["hours_actual"],
-                            "minute_actual": self.device["minute_actual"],
+                            "hours_actual": self.device.get_hours_actual(),
+                            "minute_actual": self.device.get_minute_actual(),
                         }
                     }
                     self.broker.publish('bs.real-time', payload)
                     
                     self.data["real-time"] = {}
-                time.sleep(1)
             except:
               print('An exception occurred')
+            time.sleep(1)
 
     def leerAlertas(self):
         """Simula la lectura de temperatura"""
@@ -213,9 +216,9 @@ class Sistema:
                     self.broker.publish('bs.alertas', payload)
                     
                     self.data["alert"] = {}
-                time.sleep(1)
             except:
               print('An exception occurred')
+            time.sleep(1)
     
     def leerSerial(self):
         """Simula la lectura de datos del ESP32"""
@@ -238,6 +241,7 @@ class Sistema:
                 print(f"Error de conexión: {e}")
             except Exception as e:
                 print(f"Ocurrió un error inesperado: {e}")
+            time.sleep(1)
 
     def getSignals(self):
         return {
@@ -249,5 +253,6 @@ class Sistema:
             "time_actual": self.device.timeActualChanged,
             "Alertas": self.alertas.alertas_changed,
             "Serial": self.esp32.serial_data_changed,
+            "Pause": self.device.pauseChanged,
         }
     

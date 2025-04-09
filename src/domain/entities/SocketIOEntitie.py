@@ -4,7 +4,7 @@ import time
 from src.domain.entities.ESP32Entitie import ESP32Entitie
 
 class SocketIOEntitie:
-    SOCKETIO_HOST = 'http://192.168.43.172:3000'
+    SOCKETIO_HOST = 'http://192.168.137.254:3000'
     DEVICE = "device10"
     def __init__(self, esp32, device_data):
         self.esp32: ESP32Entitie = esp32
