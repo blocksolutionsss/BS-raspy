@@ -8,10 +8,9 @@ import sys
 class SistemaUI(QMainWindow):
     def __init__(self):
         super().__init__()
-        s = Sistema()
-        self.repository = SistemaService(s)
+        self.sistema = Sistema()
 
-        self.signals: Dict[str, Signal] = self.repository.getSignals()
+        self.signals: Dict[str, Signal] = self.sistema.getSignals()
 
         self.setWindowTitle("Sistema de Monitoreo")
         self.setGeometry(100, 100, 400, 200)  # x, y, ancho, alto
@@ -130,10 +129,3 @@ class SistemaUI(QMainWindow):
         except Exception as e:
             print(f"Error al detener monitoreo: {str(e)}")
 
-
-# Código para ejecutar la aplicación si se ejecuta directamente
-if __name__ == "__main__":
-    app = QApplication(sys.argv)
-    ventana = SistemaUI()
-    ventana.show()
-    sys.exit(app.exec())
