@@ -7,12 +7,13 @@ from src.domain.entities.SensorHumedadEntitie import SensorHumedadEntitie
 from src.domain.entities.AlertasEntitie import AlertasEntitie
 from src.domain.entities.SocketIOEntitie import SocketIOEntitie
 from src.domain.entities.DeviceEntitie import DeviceEntitie
+from src.domain.entities.BrokerEntitie import BrokerEntitie
 from threading import Thread, Lock
 from datetime import datetime, timedelta
 from serial import Serial, SerialException
 import time
 import random
-from ..domain.entities.BrokerEntitie import BrokerEntitie
+import json
 
 class Sistema:
     def __init__(self):
@@ -31,10 +32,8 @@ class Sistema:
         self.threads = []
         
         self.esp32 = ESP32Entitie()
-        self.thread_esp32 = Thread(target=self.leerSerial, daemon=True)
-        self.thread_esp32.start()
-        
         self.running = False
+        self.running_temporizador = False
         self.time_init = datetime.now()
         self.time_finish = datetime.now()
         self.sqlite = SQLite3Entitie()
@@ -44,12 +43,12 @@ class Sistema:
         self.data = {
             "alert": {},
             "real-time": {},
-            "End":{}
+            "End": {}
         }
 
     def temporizador(self):
         """Simula un temporizador"""
-        while True:
+        while self.running_temporizador:
             if not self.device.get_pause():
                 with self.lock:
                     # Calcular los segundos totales del tiempo objetivo
@@ -63,16 +62,16 @@ class Sistema:
 
                     # Guardar los nuevos valores en la base de datos
                     self.sqlite.update_device({
-                        'hours_actual': self.device["hours_actual"],
-                        'minute_actual': self.device["minute_actual"]
+                        'hours_actual': self.device.get_hours_actual(),
+                        'minute_actual': self.device.get_minute_actual()
                     })
 
                     if segundos_actuales >= segundos_totales:
                         print("Tiempo de deshidratado alcanzado.")
                         # Guardar los nuevos valores en la base de datos
-                        self.device["pause"] = True
+                        self.device.set_pause(True)
                         self.sqlite.update_device({
-                            'pause': self.device["pause"]
+                            'pause': self.device.get_pause()
                         })
 
             time.sleep(1)
@@ -81,38 +80,41 @@ class Sistema:
 
         
     def iniciar(self):
-        """Inicia el proceso de desidratado"""
+        """Inicia el proceso de deshidratado"""
         self.esp32.iniciar_monitoreo(self.device.get_temperature(), self.device.get_humidity())
         self.running = True
+        self.running_temporizador = True
         self.device.set_pause(False)
         self.sqlite.update_device({
             'pause': False
         })
         self.time_init = datetime.now()
         
-
-        if len(self.threads) == 0:
-            # Iniciar el hilo para la lectura de datos del ESP32
-            self.threads.append(Thread(target=self.leerSerial, daemon=True))
-            
-            # Iniciar el hilo para la lectura de datos del ESP32
-            self.threads.append(Thread(target=self.leerAlertas, daemon=True))
-            
-            # Iniciar el hilo para cambios de real-time
-            self.threads.append(Thread(target=self.leerRealTime, daemon=True))
-            
-            # Iniciar el hilo para cambios de End
-            self.threads.append(Thread(target=self.leerEnd, daemon=True))
-            
-            # Iniciar el hilo para el temporizador
-            self.threads.append(Thread(target=self.temporizador, daemon=True))
-            
-            for t in self.threads:
-                t.start()
+        # Detener hilos anteriores si existen
+        self.threads = []
+        
+        # Iniciar el hilo para la lectura de datos del ESP32
+        self.threads.append(Thread(target=self.leerSerial, daemon=True))
+        
+        # Iniciar el hilo para la lectura de alertas
+        self.threads.append(Thread(target=self.leerAlertas, daemon=True))
+        
+        # Iniciar el hilo para cambios de real-time
+        self.threads.append(Thread(target=self.leerRealTime, daemon=True))
+        
+        # Iniciar el hilo para cambios de End
+        self.threads.append(Thread(target=self.leerEnd, daemon=True))
+        
+        # Iniciar el hilo para el temporizador
+        self.threads.append(Thread(target=self.temporizador, daemon=True))
+        
+        for t in self.threads:
+            t.start()
         
     def detener(self):
-        """Detiene el proceso de desidratado"""
+        """Detiene el proceso de deshidratado"""
         self.esp32.pausar_monitoreo()
+        self.running = False
         self.running_temporizador = False
         self.device.set_pause(True)
         self.sqlite.update_device({
@@ -121,129 +123,175 @@ class Sistema:
         self.time_finish = datetime.now()
     
     def leerEnd(self):
-        """Simula la lectura de datos del ESP32"""
+        """Monitorea señales de finalización"""
         while self.running:
             try:
                 if self.data["End"] == {}:
+                    time.sleep(1)
                     continue
+                
                 with self.lock:
                     self.data["End"] = {}
                     self.detener()
-                time.sleep(1)
-            except:
-              print('An exception occurred')
+            except Exception as e:
+                print(f'Error en leerEnd: {e}')
+            time.sleep(1)
         
     def leerRealTime(self):
-        """Simula la lectura de datos del ESP32"""
+        """Procesa datos en tiempo real del ESP32"""
         while self.running:
             try:
                 if self.data["real-time"] == {}:
+                    time.sleep(1)
                     continue
+                
                 with self.lock:
+                    # Obtener la fecha y hora actual
+                    date = datetime.now().strftime('%H:%M')
+                    
+                    # Extraer valores
+                    temperatura = self.data["real-time"].get("temperature", 0)
+                    humedad = self.data["real-time"].get("humidity", 0)
+                    peso1 = self.data["real-time"].get("weight1", 0)
+                    peso2 = self.data["real-time"].get("weight2", 0)
+                    calidadAire = self.data["real-time"].get("flyClean", 0)
+                    
+                    # Publicar datos iniciales
                     payload = {
                         "device": self.device_ID,
                         "real-time": self.data["real-time"]
                     }
                     self.broker.publish('bs.real-time', payload)
                     
-                    # Obtener la fecha y hora actual
-                    date = datetime.now().strftime('%H:%M')
+                    # Actualizar sensores y guardar en SQLite
+                    self.sqlite.add_reading({"value": temperatura, "time": date}, "temperatures")
+                    self.sensorTemperatura.update_temperature(temperatura)
                     
-                    temperature = self.data["real-time"]["temperature"]
-                    humidity = self.data["real-time"]["humidity"]
-                    weight1 = self.data["real-time"]["weight1"]
-                    weight2 = self.data["real-time"]["weight2"]
-                    flyClean = self.data["real-time"]["flyClean"]
+                    self.sqlite.add_reading({"value": humedad, "time": date}, "humidities")
+                    self.sensorHumedad.update_Humedad(humedad)
                     
-                    self.sqlite.add_reading({"value": temperature, "time": date}, "temperatures")
-                    self.sensorTemperatura.update_temperature(temperature)
+                    self.sqlite.add_reading({"value": peso1, "time": date}, "weights1")
+                    self.sensorPeso1.update_weight(peso1)
                     
-                    self.sqlite.add_reading({"value": humidity, "time": date}, "humidities")
-                    self.sensorHumedad.update_Humedad(humidity)
+                    self.sqlite.add_reading({"value": peso2, "time": date}, "weights2")
+                    self.sensorPeso2.update_weight(peso2)
                     
-                    self.sqlite.add_reading({"value": weight1, "time": date}, "weights1")
-                    self.sensorPeso1.update_weight(weight1)
+                    self.sqlite.add_reading({"value": calidadAire, "time": date}, "airValues")
+                    self.sensorCalidadAire.update_Calidad_Aire(calidadAire)
                     
-                    self.sqlite.add_reading({"value": weight2, "time": date}, "weights2")
-                    self.sensorPeso2.update_weight(weight2)
-                    
-                    self.sqlite.add_reading({"value": flyClean, "time": date}, "airValues")
-                    self.sensorCalidadAire.update_Calidad_Aire(flyClean)
-                    
-                    payload = {
+                    # Preparar y publicar payload completo
+                    payload_completo = {
                         "device": self.device_ID,
                         "data": {
-                            "temperature": self.data["real-time"]["temperature"],
-                            "humidity": self.data["real-time"]["humidity"],
-                            "weight1": self.data["real-time"]["weight1"],
-                            "weight2": self.data["real-time"]["weight2"],
-                            "airPurity": self.data["real-time"]["flyClean"],
+                            "temperature": temperatura,
+                            "humidity": humedad,
+                            "weight1": peso1,
+                            "weight2": peso2,
+                            "airPurity": calidadAire,
                             "hours_actual": self.device.get_hours_actual(),
                             "minute_actual": self.device.get_minute_actual(),
                         }
                     }
-                    self.broker.publish('bs.real-time', payload)
+                    self.broker.publish('bs.real-time', payload_completo)
                     
+                    # Limpiar datos procesados
                     self.data["real-time"] = {}
-            except:
-              print('An exception occurred')
+            except Exception as e:
+                print(f'Error en leerRealTime: {e}')
             time.sleep(1)
 
     def leerAlertas(self):
-        """Simula la lectura de temperatura"""
+        """Procesa alertas del ESP32"""
         while self.running:
             try:
-                if not self.data.get("alert"):
+                if not self.data.get("alert") or self.data["alert"] == {}:
+                    time.sleep(1)
                     continue
+                
                 with self.lock:
+                    # Publicar alertas iniciales
                     payload = {
                         "device": self.device_ID,
                         "alerts": self.data["alert"]
                     }
                     self.broker.publish('bs.notifications', payload)
                     
-                    # Obtener la fecha y hora actual
+                    # Procesar cada alerta
                     date = datetime.now().strftime('%H:%M')
-                    for alert in self.data["alert"]:
-                        alert["date"] = date
-                        alert["id"] = self.sqlite.add_alert(alert)
-                        self.alertas.add_alert(alert)
+                    alertas_procesadas = []
                     
-                    payload = {
-                        "device": self.device_ID,
-                        "alerts": self.data["alert"]
-                    }
-                    self.broker.publish('bs.alertas', payload)
+                    # Verificar si es una lista o un solo objeto
+                    if isinstance(self.data["alert"], list):
+                        alertas_a_procesar = self.data["alert"]
+                    else:
+                        alertas_a_procesar = [self.data["alert"]]
                     
+                    for alerta in alertas_a_procesar:
+                        # Si es un diccionario, procesarlo
+                        if isinstance(alerta, dict):
+                            alerta["date"] = date
+                            alerta_id = self.sqlite.add_alert(alerta)
+                            alerta["id"] = alerta_id
+                            self.alertas.add_alert(alerta)
+                            alertas_procesadas.append(alerta)
+                    
+                    # Publicar alertas procesadas
+                    if alertas_procesadas:
+                        payload_final = {
+                            "device": self.device_ID,
+                            "alerts": alertas_procesadas
+                        }
+                        self.broker.publish('bs.alertas', payload_final)
+                    
+                    # Limpiar alertas procesadas
                     self.data["alert"] = {}
-            except:
-              print('An exception occurred')
+            except Exception as e:
+                print(f'Error en leerAlertas: {e}')
             time.sleep(1)
     
     def leerSerial(self):
-        """Simula la lectura de datos del ESP32"""
+        """Lee datos del puerto serial del ESP32"""
         while self.running:
             try:
-                if self.esp32.serial.in_waiting == 0:
+                if not self.esp32.serial.is_open:
+                    self.esp32.iniciar_monitoreo(self.device.get_temperature(), self.device.get_humidity())
+                    time.sleep(1)
                     continue
-                data = self.esp32.serial.readline().decode('utf-8').strip() 
-                self.esp32.update_serial_data(str(data))
-                if "alert" in data:
-                    self.data["alert"] = data["alert"]
-                elif "real-time" in data:
-                    self.data["real-time"] = data["real-time"]
-                elif "End" in data:
-                    self.data["End"] = data["End"]
-                    
-                print(f"Datos leídos del ESP32: {data}")
                 
+                if self.esp32.serial.in_waiting == 0:
+                    time.sleep(0.1)
+                    continue
+                
+                # Leer datos del serial
+                data_str = self.esp32.serial.readline().decode('utf-8').strip()
+                self.esp32.update_serial_data(data_str)
+                
+                # Intentar parsear como JSON
+                try:
+                    data = json.loads(data_str)
+                    
+                    # Distribuir datos según su tipo
+                    if "alert" in data:
+                        self.data["alert"] = data["alert"]
+                    elif "real-time" in data:
+                        self.data["real-time"] = data["real-time"]
+                    elif "End" in data:
+                        self.data["End"] = data["End"]
+                    
+                    print(f"Datos leídos del ESP32: {data}")
+                except json.JSONDecodeError:
+                    # Si no es JSON, simplemente registrarlo como mensaje
+                    print(f"Datos recibidos (no JSON): {data_str}")
+                    
             except SerialException as e:
-                print(f"Error de conexión: {e}")
+                print(f"Error de conexión serial: {e}")
+                time.sleep(5)  # Esperar antes de reintentar
             except Exception as e:
-                print(f"Ocurrió un error inesperado: {e}")
-            time.sleep(1)
+                print(f"Error inesperado en leerSerial: {e}")
+                time.sleep(1)
 
     def getSignals(self):
+        """Retorna las señales disponibles para la interfaz de usuario"""
         return {
             "Temperatura": self.sensorTemperatura.temperatura_changed,
             "Humedad": self.sensorHumedad.humedad_changed,
@@ -255,4 +303,3 @@ class Sistema:
             "Serial": self.esp32.serial_data_changed,
             "Pause": self.device.pauseChanged,
         }
-    
