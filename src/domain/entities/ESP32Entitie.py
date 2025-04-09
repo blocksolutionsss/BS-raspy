@@ -1,13 +1,23 @@
 from serial import Serial, SerialException
+from PySide6.QtCore import QObject, Signal
+from dataclasses import dataclass
 from json import dumps
 from time import sleep
 
-class ESP32Entitie:
+@dataclass
+class ESP32Entitie(QObject):
+    # Definición de señales
+    serial_data_changed = Signal(str)  # Señal que se emitirá cuando cambie la calidad_Aire
+    
     def __init__(self):
+        super().__init__()
         self.puerto = '/dev/ttyACM0'  # Cambiar si es necesario
         self.velocidad = 115200       # Configura la misma velocidad que en la ESP32
         self.serial = Serial(self.puerto, self.velocidad)
         self.serial.flushInput()  # Limpiar el buffer de entrada al iniciar
+
+    def update_serial_data(self, newSerial_data: str):
+        self.serial_data_changed.emit(newSerial_data)
 
     def iniciar_monitoreo(self, temperature, humidity):
         try:
