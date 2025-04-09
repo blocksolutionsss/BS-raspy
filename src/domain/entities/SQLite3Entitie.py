@@ -54,35 +54,15 @@ class SQLite3Entitie:
                 FOREIGN KEY (device_id) REFERENCES devices(id)
             )
         ''')
-
-        # Lecturas de temperatura para cada historial
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS temperature_readings (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                history_id TEXT,
-                temperature REAL,
-                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (history_id) REFERENCES histories(id)
-            )
-        ''')
-
+        
         # Lecturas de humedad para cada historial
         cursor.execute('''
-            CREATE TABLE IF NOT EXISTS humidity_readings (
+            CREATE TABLE IF NOT EXISTS readings (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 history_id TEXT,
-                humidity REAL,
-                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (history_id) REFERENCES histories(id)
-            )
-        ''')
-
-        # Lecturas de peso para cada historial
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS weight_readings (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                history_id TEXT,
-                weight REAL,
+                type TEXT,
+                value REAL,
+                time TEXT,
                 timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (history_id) REFERENCES histories(id)
             )
@@ -199,8 +179,8 @@ class SQLite3Entitie:
         
         print("Dispositivo actualizado correctamente")
     
-    def add_temperature_reading(self, data):
-        """Agrega una lectura de temperatura a la última historia"""
+    def add_reading(self, data, reading_type):
+        """Agrega una lectura (temperatura, humedad o peso) a la última historia"""
         conn = self.get_connection()
         cursor = conn.cursor()
         
@@ -210,80 +190,23 @@ class SQLite3Entitie:
         
         if not history_id_result:
             conn.close()
-            print("No se encontró historia para agregar temperatura")
+            print(f"No se encontró historia para agregar {reading_type}")
             return False
         
         history_id = history_id_result[0]
-        temperature = data.get('temperature', 0)
+        value = data.get('value', 0)
+        time = data.get('time', datetime.now().strftime('%H:%M'))
         
         # Insertar la lectura
-        cursor.execute('''
-            INSERT INTO temperature_readings (history_id, temperature)
-            VALUES (?, ?)
-        ''', (history_id, temperature))
+        cursor.execute(f'''
+            INSERT INTO readings (history_id, type, value, time)
+            VALUES (?, ?, ?, ?)
+        ''', (history_id, reading_type, value, time))
         
         conn.commit()
         conn.close()
         
-        print(f"Lectura de temperatura {temperature} agregada a historia {history_id}")
-        return True
-    
-    def add_humidity_reading(self, data):
-        """Agrega una lectura de humedad a la última historia"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        
-        # Obtener el ID de la última historia
-        cursor.execute('SELECT id FROM histories WHERE device_id = "device10" ORDER BY date DESC LIMIT 1')
-        history_id_result = cursor.fetchone()
-        
-        if not history_id_result:
-            conn.close()
-            print("No se encontró historia para agregar humedad")
-            return False
-        
-        history_id = history_id_result[0]
-        humidity = data.get('humidity', 0)
-        
-        # Insertar la lectura
-        cursor.execute('''
-            INSERT INTO humidity_readings (history_id, humidity)
-            VALUES (?, ?)
-        ''', (history_id, humidity))
-        
-        conn.commit()
-        conn.close()
-        
-        print(f"Lectura de humedad {humidity} agregada a historia {history_id}")
-        return True
-    
-    def add_weight_reading(self, data):
-        """Agrega una lectura de peso a la última historia"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        
-        # Obtener el ID de la última historia
-        cursor.execute('SELECT id FROM histories WHERE device_id = "device10" ORDER BY date DESC LIMIT 1')
-        history_id_result = cursor.fetchone()
-        
-        if not history_id_result:
-            conn.close()
-            print("No se encontró historia para agregar peso")
-            return False
-        
-        history_id = history_id_result[0]
-        weight = data.get('weight', 0)
-        
-        # Insertar la lectura
-        cursor.execute('''
-            INSERT INTO weight_readings (history_id, weight)
-            VALUES (?, ?)
-        ''', (history_id, weight))
-        
-        conn.commit()
-        conn.close()
-        
-        print(f"Lectura de peso {weight} agregada a historia {history_id}")
+        print(f"Lectura de {reading_type} {value} agregada a historia {history_id}")
         return True
     
     def add_alert(self, data):
@@ -398,6 +321,24 @@ class SQLite3Entitie:
         print(f"Nueva historia creada con ID {new_id}")
         return new_id
     
+    def fetch_by_type(self, cursor, history_id, sensor_type):
+        cursor.execute(
+            '''
+            SELECT value, time
+            FROM readings
+            WHERE history_id = ? AND type = ?
+            ORDER BY timestamp
+            ''',
+            (history_id, sensor_type)
+        )
+        return [
+            {
+                "value": row[0],
+                "time": datetime.strptime(row[1], "%Y-%m-%d %H:%M:%S").strftime("%H:%M")
+            }
+            for row in cursor.fetchall()
+        ]
+    
     def get_device(self):
         """Obtiene todos los datos del dispositivo incluyendo sus historias"""
         conn = self.get_connection()
@@ -429,16 +370,16 @@ class SQLite3Entitie:
             history_data = dict(zip(history_columns, history_row))
             
             # Obtener temperaturas
-            cursor.execute('SELECT temperature FROM temperature_readings WHERE history_id = ? ORDER BY timestamp', (history_id,))
-            temperatures = [row[0] for row in cursor.fetchall()]
+            temperatures = self.fetch_by_type(cursor, history_id, "temperatures")
             
             # Obtener humedades
-            cursor.execute('SELECT humidity FROM humidity_readings WHERE history_id = ? ORDER BY timestamp', (history_id,))
-            humidities = [row[0] for row in cursor.fetchall()]
+            humidities = self.fetch_by_type(cursor, history_id, "humidities")
+            
+            # Obtener calidad de aire
+            airValues = self.fetch_by_type(cursor, history_id, "airValues")
             
             # Obtener pesos
-            cursor.execute('SELECT weight FROM weight_readings WHERE history_id = ? ORDER BY timestamp', (history_id,))
-            weights = [row[0] for row in cursor.fetchall()]
+            weights = self.fetch_by_type(cursor, history_id, "weights")
             
             # Obtener alertas
             cursor.execute('SELECT * FROM alerts WHERE history_id = ? ORDER BY date', (history_id,))
@@ -462,6 +403,7 @@ class SQLite3Entitie:
                 "temperatures": temperatures,
                 "humidities": humidities,
                 "weights": weights,
+                "airValues": airValues,
                 "fruit": history_data.get("fruit", ""),
                 "automatic": bool(history_data.get("automatic", False)),
                 "hours": history_data.get("hours", 0),

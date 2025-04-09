@@ -1,5 +1,6 @@
 from src.domain.entities.SensorTemperaturaEntitie import SensorTemperaturaEntitie
 from src.domain.entities.ESP32Entitie import ESP32Entitie
+from src.domain.entities.SQLite3Entitie import SQLite3Entitie
 from threading import Thread, Lock
 from datetime import datetime, timedelta
 from serial import Serial, SerialException
@@ -14,6 +15,8 @@ class Sistema:
         self.running = False
         self.time_init = datetime.now()
         self.time_finish = datetime.now()
+        self.sqlite = SQLite3Entitie()
+        self.device_data = self.sqlite.get_device()
         
         self.broker = BrokerEntitie()
         
@@ -87,6 +90,17 @@ class Sistema:
                         "real-time": self.data["real-time"]
                     }
                     self.broker.publish('bs.real-time', payload)
+                    
+                    #obtener la fecha y hora actual
+                    date = self.data["real-time"]
+                    
+                    # Promediar los pesos
+                    weight = ( self.data["real-time"]["weight1"] + self.data["real-time"]["weight2"] ) / 2
+                    
+                    self.sqlite.add_reading({"value": self.data["real-time"]["temperature"], "time": date}, "temperatures")
+                    self.sqlite.add_reading({"value": self.data["real-time"]["humidity"], "time": date}, "humidities")
+                    self.sqlite.add_reading({"value": weight, "time": date}, "weights")
+                    self.sqlite.add_reading({"value": self.data["real-time"]["flyClean"], "time": date}, "airValues")
                     self.data["real-time"] = {}
                 time.sleep(1)
             except:
@@ -96,7 +110,7 @@ class Sistema:
         """Simula la lectura de temperatura"""
         while self.running:
             try:
-                if self.data["alert"] == {}:
+                if len(self.data["alert"]) == 0:
                     continue
                 with self.lock:
                     payload = {
@@ -127,10 +141,4 @@ class Sistema:
         return {
             "Temp": self.sensorTemp.temperatura_changed
         }
-    
-    def detener_simulacion(self):
-        """Detiene la simulación de cambios de temperatura"""
-        self.running = False
-        if self.thread.is_alive():
-            self.thread.join(timeout=2)  # Esperar hasta 2 segundos a que el hilo termine
     
