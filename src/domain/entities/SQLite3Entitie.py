@@ -379,7 +379,8 @@ class SQLite3Entitie:
             airValues = self.fetch_by_type(cursor, history_id, "airValues")
             
             # Obtener pesos
-            weights = self.fetch_by_type(cursor, history_id, "weights")
+            weights1 = self.fetch_by_type(cursor, history_id, "weights1")
+            weights2 = self.fetch_by_type(cursor, history_id, "weights2")
             
             # Obtener alertas
             cursor.execute('SELECT * FROM alerts WHERE history_id = ? ORDER BY date', (history_id,))
@@ -402,7 +403,8 @@ class SQLite3Entitie:
                 "id": history_data.get("id"),
                 "temperatures": temperatures,
                 "humidities": humidities,
-                "weights": weights,
+                "weights1": weights1,
+                "weights2": weights2,
                 "airValues": airValues,
                 "fruit": history_data.get("fruit", ""),
                 "automatic": bool(history_data.get("automatic", False)),
@@ -451,3 +453,93 @@ class SQLite3Entitie:
         
         conn.close()
         return complete_device
+
+    def get_last_history(self):
+        """Obtiene la última historia agregada del dispositivo 'device10'"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        # Obtener datos del dispositivo
+        cursor.execute('SELECT * FROM devices WHERE id = "device10"')
+        device_row = cursor.fetchone()
+        
+        if not device_row:
+            conn.close()
+            print("No se encontró el dispositivo")
+            return None
+
+        # Obtener el ID del historial más reciente
+        cursor.execute('SELECT id FROM histories WHERE device_id = "device10" ORDER BY date DESC LIMIT 1')
+        result = cursor.fetchone()
+        
+        if not result:
+            # Si no hay historias, crear una vacía
+            new_history_id = self.create_new_history()
+            last_history = {
+                "id": new_history_id,
+                "temperatures": [],
+                "humidities": [],
+                "weights": [],
+                "fruit": "",
+                "automatic": False,
+                "hours": 0,
+                "minutes": 0,
+                "date": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                "alerts": []
+            }
+            conn.close()
+            return last_history
+
+        history_id = result[0]
+
+        # Obtener datos del historial
+        cursor.execute('SELECT * FROM histories WHERE id = ?', (history_id,))
+        history_row = cursor.fetchone()
+        history_columns = [description[0] for description in cursor.description]
+        history_data = dict(zip(history_columns, history_row))
+        
+        # Obtener temperaturas
+        temperatures = self.fetch_by_type(cursor, history_id, "temperatures")
+        
+        # Obtener humedades
+        humidities = self.fetch_by_type(cursor, history_id, "humidities")
+        
+        # Obtener calidad de aire
+        airValues = self.fetch_by_type(cursor, history_id, "airValues")
+        
+        # Obtener pesos
+        weights = self.fetch_by_type(cursor, history_id, "weights")
+        
+        # Obtener alertas
+        cursor.execute('SELECT * FROM alerts WHERE history_id = ? ORDER BY date', (history_id,))
+        alert_rows = cursor.fetchall()
+        alert_columns = [description[0] for description in cursor.description]
+        
+        alerts = []
+        for alert_row in alert_rows:
+            alert_data = dict(zip(alert_columns, alert_row))
+            alert_formatted = {
+                "id": str(alert_data.get("id")),
+                "description": alert_data.get("description", ""),
+                "date": alert_data.get("date", ""),
+                "priority": alert_data.get("priority", 0),
+            }
+            alerts.append(alert_formatted)
+        
+        # Construir historial completo
+        last_history = {
+            "id": history_data.get("id"),
+            "temperatures": temperatures,
+            "humidities": humidities,
+            "weights": weights,
+            "airValues": airValues,
+            "fruit": history_data.get("fruit", ""),
+            "automatic": bool(history_data.get("automatic", False)),
+            "hours": history_data.get("hours", 0),
+            "minutes": history_data.get("minutes", 0),
+            "date": history_data.get("date", ""),
+            "alerts": alerts
+        }
+        
+        conn.close()
+        return last_history

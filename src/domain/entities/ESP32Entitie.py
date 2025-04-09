@@ -1,4 +1,5 @@
-from serial import Serial
+from serial import Serial, SerialException
+from json import dumps
 from time import sleep
 
 class ESP32Entitie:
@@ -8,6 +9,41 @@ class ESP32Entitie:
         self.serial = Serial(self.puerto, self.velocidad)
         self.serial.flushInput()  # Limpiar el buffer de entrada al iniciar
 
+    def iniciar_monitoreo(self, temperature, humidity):
+        try:
+            print(f"Iniciando Monitorización")
+            
+            data = {
+                "event": "start",
+                "sensor": {
+                    "temperature": temperature,
+                    "humidity": humidity
+                }
+            }
+
+            message = dumps(data) + "\n"  # Agregar salto de linea para indicar fin del mensaje
+
+            self.serial.write(message.encode())
+            print(f"Enviado al ESP32: {data}")
+
+        except SerialException as e:
+            print(f"Error al acceder al puerto serial: {e}")
+    
+    def pausar_monitoreo(self):
+        try:
+            print(f"Pausando Monitorización")
+            
+            data = {
+                "event": "pause"
+            }
+
+            message = dumps(data) + "\n"  # Agregar salto de linea para indicar fin del mensaje
+
+            self.serial.write(message.encode())
+            print(f"Enviado al ESP32: {data}")
+
+        except SerialException as e:
+            print(f"Error al acceder al puerto serial: {e}")
             
     # Funcion que maneja el reinicio del ESP32 a traves de DTR y RTS
     def reiniciar_esp32(self):

@@ -3,7 +3,11 @@ from abc import ABC, abstractmethod
 class SistemaRepository(ABC):
 
     @abstractmethod
-    def leerTemperaturas(self):
+    def iniciar(self):
+        pass
+    
+    @abstractmethod
+    def detener(self):
         pass
 
     @abstractmethod

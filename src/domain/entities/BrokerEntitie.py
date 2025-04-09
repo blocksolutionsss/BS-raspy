@@ -25,28 +25,33 @@ class BrokerEntitie:
         Create a channel for the broker.
         """
         # Create credentials object
-        credentials = PlainCredentials(
-            username=self.user,
-            password=self.password
-        )
+        try:
+            credentials = PlainCredentials(
+                username=self.user,
+                password=self.password
+            )
+            
+            # Setup connection parameters
+            parameters = ConnectionParameters(
+                host=self.ip,
+                port=self.port,
+                credentials=credentials
+            )
+            
+            # Establish connection
+            self.connection = BlockingConnection(parameters)
+            
+            # Create and store the channel
+            self.channel = self.connection.channel()
+            
+            # If exchange is specified, you might want to declare it
+            if self.exchange:
+                # You can add exchange_type and other parameters as needed
+                self.channel.exchange_declare(exchange=self.exchange, exchange_type='direct')
         
-        # Setup connection parameters
-        parameters = ConnectionParameters(
-            host=self.ip,
-            port=self.port,
-            credentials=credentials
-        )
-        
-        # Establish connection
-        self.connection = BlockingConnection(parameters)
-        
-        # Create and store the channel
-        self.channel = self.connection.channel()
-        
-        # If exchange is specified, you might want to declare it
-        if self.exchange:
-            # You can add exchange_type and other parameters as needed
-            self.channel.exchange_declare(exchange=self.exchange, exchange_type='direct')
+        except Exception as e:
+            print(f"Error creating channel: {e}")
+            self.channel = None
     
     def publish(self, routing_key: str, message: Dict[str, Any]) -> bool:
         """

@@ -36,30 +36,27 @@ class Sistema:
         }
         
     def iniciar(self):
-        """Inicia la simulación de cambios de temperatura"""
+        """Inicia el proceso de desidratado"""
+        self.esp32.iniciar_monitoreo(self.device_data["temperature"], self.device_data["humidity"])
         self.running = True
         self.time_init = datetime.now()
         
-        # Iniciar el hilo para simular cambios de temperatura
+        # Iniciar el hilo para la lectura de datos del ESP32
         self.threads.append(Thread(target=self.leerAlertas, daemon=True))
         
-        # Iniciar el hilo para simular cambios de real-time
+        # Iniciar el hilo para cambios de real-time
         self.threads.append(Thread(target=self.leerRealTime, daemon=True))
         
-        # Iniciar el hilo para simular cambios de End
+        # Iniciar el hilo para cambios de End
         self.threads.append(Thread(target=self.leerEnd, daemon=True))
         
         for t in self.threads:
             t.start()
         
     def detener(self):
-        """Detiene la simulación de cambios de temperatura"""
-        self.running = False
+        """Detiene el proceso de desidratado"""
+        self.esp32.pausar_monitoreo()
         self.time_finish = datetime.now()
-        
-        for t in self.threads:
-            if t.is_alive():
-                t.join(timeout=2)
     
     def leerEnd(self):
         """Simula la lectura de datos del ESP32"""
@@ -68,11 +65,6 @@ class Sistema:
                 if self.data["End"] == {}:
                     continue
                 with self.lock:
-                    payload = {
-                        "device": self.device_ID,
-                        "data": self.data["End"]
-                    }
-                    self.broker.publish('bs.end', payload)
                     self.data["End"] = {}
                 time.sleep(1)
             except:
@@ -91,16 +83,28 @@ class Sistema:
                     }
                     self.broker.publish('bs.real-time', payload)
                     
-                    #obtener la fecha y hora actual
-                    date = self.data["real-time"]
-                    
-                    # Promediar los pesos
-                    weight = ( self.data["real-time"]["weight1"] + self.data["real-time"]["weight2"] ) / 2
+                    # Obtener la fecha y hora actual
+                    date = datetime.now().strftime('%H:%M')
                     
                     self.sqlite.add_reading({"value": self.data["real-time"]["temperature"], "time": date}, "temperatures")
                     self.sqlite.add_reading({"value": self.data["real-time"]["humidity"], "time": date}, "humidities")
-                    self.sqlite.add_reading({"value": weight, "time": date}, "weights")
+                    self.sqlite.add_reading({"value": self.data["real-time"]["weight1"], "time": date}, "weights1")
+                    self.sqlite.add_reading({"value": self.data["real-time"]["weight2"], "time": date}, "weights2")
                     self.sqlite.add_reading({"value": self.data["real-time"]["flyClean"], "time": date}, "airValues")
+                    
+                    payload = {
+                        "device": self.device_ID,
+                        "data": {
+                            "temperature": self.data["real-time"]["temperature"],
+                            "humidity": self.data["real-time"]["humidity"],
+                            "weight1": self.data["real-time"]["weight1"],
+                            "weight2": self.data["real-time"]["weight2"],
+                            "flyClean": self.data["real-time"]["flyClean"],
+                            "date": date
+                        }
+                    }
+                    self.broker.publish('bs.real-time', payload)
+                    
                     self.data["real-time"] = {}
                 time.sleep(1)
             except:
@@ -110,7 +114,7 @@ class Sistema:
         """Simula la lectura de temperatura"""
         while self.running:
             try:
-                if len(self.data["alert"]) == 0:
+                if not self.data.get("alert"):
                     continue
                 with self.lock:
                     payload = {
@@ -118,6 +122,19 @@ class Sistema:
                         "alerts": self.data["alert"]
                     }
                     self.broker.publish('bs.notifications', payload)
+                    
+                    # Obtener la fecha y hora actual
+                    date = datetime.now().strftime('%H:%M')
+                    for alert in self.data["alert"]:
+                        alert["date"] = date
+                        alert["id"] = self.sqlite.add_alert(alert)
+                    
+                    payload = {
+                        "device": self.device_ID,
+                        "alerts": self.data["alert"]
+                    }
+                    self.broker.publish('bs.alerts', payload)
+                    
                     self.data["alert"] = {}
                 time.sleep(1)
             except:
@@ -130,8 +147,15 @@ class Sistema:
                 if self.esp32.serial.in_waiting == 0:
                     continue
                 data = self.esp32.serial.readline().decode('utf-8').strip() 
+                if "alert" in data:
+                    self.data["alert"] = data["alert"]
+                elif "real-time" in data:
+                    self.data["real-time"] = data["real-time"]
+                elif "End" in data:
+                    self.data["End"] = data["End"]
+                    
                 print(f"Datos leídos del ESP32: {data}")
-                # Aquí puedes procesar los datos leídos
+                
             except SerialException as e:
                 print(f"Error de conexión: {e}")
             except Exception as e:
